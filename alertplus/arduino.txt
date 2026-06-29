@@ -1,0 +1,81 @@
+// Paste this into your Arduino IDE
+// The SIM800L sends location data as SMS
+
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial gsmSerial(16, 17);  // RX, TX for SIM800L
+SoftwareSerial gpsSerial(18, 19);  // RX, TX for NEO-6M
+TinyGPSPlus gps;
+
+// ← Change to your gateway PC's SIM number
+const String PARENT_PHONE = "+639XXXXXXXXXX";
+const String DEVICE_PHONE = "+639YYYYYYYYYY"; // this device's SIM
+
+void setup() {
+    Serial.begin(115200);
+    gsmSerial.begin(9600);
+    gpsSerial.begin(9600);
+    delay(3000);
+    Serial.println("ALERT+ Device Ready");
+}
+
+void sendSMS(String phone, String message) {
+    gsmSerial.println("AT+CMGF=1");
+    delay(500);
+    gsmSerial.println("AT+CMGS=\"" + phone + "\"");
+    delay(500);
+    gsmSerial.print(message);
+    delay(500);
+    gsmSerial.write(26); // Ctrl+Z
+    delay(3000);
+    Serial.println("SMS sent: " + message);
+}
+
+void sendLocationSMS(String source) {
+    // Wait for valid GPS fix
+    unsigned long start = millis();
+    while (millis() - start < 10000) {
+        while (gpsSerial.available()) gps.encode(gpsSerial.read());
+        if (gps.location.isValid()) break;
+    }
+
+    if (!gps.location.isValid()) {
+        sendSMS(PARENT_PHONE, "ALERT+|" + DEVICE_PHONE + "|0|0|no_fix");
+        return;
+    }
+
+    String msg = "ALERT+|" + DEVICE_PHONE + "|"
+               + String(gps.location.lat(), 7) + "|"
+               + String(gps.location.lng(), 7) + "|"
+               + source;
+
+    sendSMS(PARENT_PHONE, msg);
+}
+
+// Check incoming SMS for commands from parent portal
+void checkIncomingSMS() {
+    if (gsmSerial.available()) {
+        String resp = gsmSerial.readString();
+
+        if (resp.indexOf("CMD:PING") >= 0) {
+            sendLocationSMS("location_ping");
+        }
+        else if (resp.indexOf("CMD:PRESENCE") >= 0) {
+            // Activate buzzer/LED
+            // tone(BUZZER_PIN, 1000, 1000);
+            // digitalWrite(LED_PIN, HIGH); delay(1000); digitalWrite(LED_PIN, LOW);
+            Serial.println("Presence call received!");
+        }
+    }
+}
+
+void loop() {
+    // Read GPS continuously
+    while (gpsSerial.available()) gps.encode(gpsSerial.read());
+
+    // Check for incoming commands
+    checkIncomingSMS();
+
+    delay(100);
+}
